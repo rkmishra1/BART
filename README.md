@@ -172,3 +172,9 @@ Below is the summary of the benchmarking results:
 
 > [!NOTE]
 > Our custom BART implementation demonstrates high predictive accuracy, substantially outperforming linear models (OLS/Lasso) and remaining highly competitive with Random Forest and GBM, even when running with a lightweight configuration (50 trees, 500 draws) optimized for pure R execution.
+
+---
+
+## 👥 Contributors
+
+*   **Ramakrushna Mishra** - Core Developer & Researcher - [rkmishra1](https://github.com/rkmishra1)
