@@ -177,4 +177,4 @@ Below is the summary of the benchmarking results:
 
 ## 👥 Contributors
 
-*   **Ramakrushna Mishra** - Core Developer & Researcher - [rkmishra1](https://github.com/rkmishra1)
+*   **Ramakrushna Mishra** - Core Developer & Researcher - [LinkedIn](https://www.linkedin.com/in/ramakrushna97/) | [GitHub](https://github.com/rkmishra1)
