@@ -1,84 +1,166 @@
-# BART: Bayesian Additive Regression Trees in R
+# 🌲 BART: Bayesian Additive Regression Trees in R
 
-This repository provides a custom, optimized R implementation of **Bayesian Additive Regression Trees (BART)** based on the seminal paper:
+[![R Version](https://img.shields.io/badge/R-%3E%3D%204.0-blue.svg)](https://www.r-project.org/)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![GitHub Repos](https://img.shields.io/badge/repo-rkmishra1/BART-purple.svg)](https://github.com/rkmishra1/BART)
+
+A premium, optimized, and self-contained R implementation of **Bayesian Additive Regression Trees (BART)**, matching the specifications of the seminal paper:
 > **BART: Bayesian additive regression trees**  
 > Hugh A. Chipman, Edward I. George, and Robert E. McCulloch.  
 > *The Annals of Applied Statistics*, 2010, Vol. 4, No. 1, 266–298.
 
-Along with the core MCMC implementation, this repository includes replication scripts for **simulated data studies (Friedman's 5D function)** and **real data benchmarking (Boston Housing)** comparing BART against other popular machine learning regression methods (Lasso, Random Forests, Gradient Boosting, and OLS).
+---
+
+## 📌 Table of Contents
+*   [📖 Methodology Overview](#-methodology-overview)
+    *   [1. Sum-of-Trees Model](#1-sum-of-trees-model)
+    *   [2. Regularization Priors](#2-regularization-priors)
+    *   [3. Bayesian Backfitting MCMC](#3-bayesian-backfitting-mcmc)
+*   [⚡ Performance Optimizations](#-performance-optimizations)
+*   [📂 File Structure](#-file-structure)
+*   [🚀 Quick Start Guide](#-quick-start-guide)
+*   [📊 Simulation Studies (Friedman 5D)](#-simulation-studies-friedman-5d)
+*   [📈 Real-World Benchmarking (Boston Housing)](#-real-world-benchmarking-boston-housing)
 
 ---
 
 ## 📖 Methodology Overview
 
-BART is a Bayesian "sum-of-trees" model that acts as a non-parametric regression approach using dimensionally adaptive random basis elements. It approximates an unknown regression function $f(x) = E(Y|x)$ as a sum of $m$ trees:
+### 1. Sum-of-Trees Model
+BART models the relationship between a continuous response $Y$ and a $p$-dimensional predictor vector $x$ as a sum of $m$ regression trees:
 
 $$Y = \sum_{j=1}^m g(x; T_j, M_j) + \epsilon, \quad \epsilon \sim N(0, \sigma^2)$$
 
-where each $T_j$ represents a binary decision tree structure, and $M_j = (\mu_{1j}, \dots, \mu_{bj})$ represents the parameters associated with its $b$ terminal leaf nodes.
+where:
+*   $T_j$ denotes the structure of the $j$-th binary tree (its splitting variables and split points).
+*   $M_j = (\mu_{1j}, \dots, \mu_{bj})$ represents the parameters associated with the $b$ terminal leaf nodes of $T_j$.
+*   $g(x; T_j, M_j)$ routes the input $x$ to its corresponding leaf node and returns its value $\mu_{ij}$.
 
-### 1. Regularization Priors
-To prevent individual trees from dominating the model (making them "weak learners"), BART imposes a regularizing prior:
-*   **Tree Structure Prior $P(T_j)$**: The probability of a node at depth $d$ splitting is $\alpha_0 (1+d)^{-\beta_0}$ (default $\alpha_0 = 0.95, \beta_0 = 2.0$), heavily favoring small trees (2-3 leaves).
-*   **Leaf Parameter Prior $P(\mu_{ij} | T_j)$**: $\mu_{ij} \sim N(0, \sigma_\mu^2)$, where $\sigma_\mu = 0.5 / (k \sqrt{m})$. This shrinks individual leaf effects toward zero.
-*   **Residual Variance Prior $P(\sigma^2)$**: $\sigma^2 \sim \text{Inv-Gamma}(\nu/2, \nu\lambda/2)$ where $\nu=3$ and $\lambda$ is calibrated to ensure that the 90th percentile of $\sigma$ falls below a rough estimate $\hat{\sigma}$ (e.g. sample standard deviation or OLS residual variance).
+### 2. Regularization Priors
+To prevent individual trees from growing too large and dominating the ensemble (constraining them to be "weak learners"), BART imposes three regularizing priors:
+1.  **Tree Structure Prior $P(T_j)$**: The probability of a node at depth $d$ splitting is given by:
+    $$P_{\text{split}}(d) = \alpha (1+d)^{-\beta}$$
+    Using the default hyperparameters $\alpha = 0.95$ and $\beta = 2$, trees are strongly shrunk to be small (typically 2 or 3 terminal nodes).
+2.  **Leaf Parameter Prior $P(\mu_{ij} | T_j)$**: Centered at zero:
+    $$\mu_{ij} \sim N(0, \sigma_\mu^2), \quad \text{where } \sigma_\mu = \frac{0.5}{k \sqrt{m}}$$
+    This scales the leaf values to the range $[-0.5, 0.5]$ of the scaled response $Y$, forcing each tree to explain only a tiny fraction of the overall variation.
+3.  **Residual Variance Prior $P(\sigma^2)$**: Conformed as a conjugate Inverse-Gamma prior:
+    $$\sigma^2 \sim \text{Inv-Gamma}(\nu/2, \nu\lambda/2)$$
+    By default, $\nu=3$ and $\lambda$ is calibrated such that the $q=0.90$ quantile of the prior is centered below a rough estimate $\hat{\sigma}$.
 
-### 2. Bayesian Backfitting MCMC
-Fitting is performed via a Gibbs sampler cycling through the trees. For each tree $j \in \{1, \dots, m\}$:
-1.  Compute the **partial residuals** excluding tree $j$:
+### 3. Bayesian Backfitting MCMC
+The model parameters are sampled via a Gibbs sampler. For each tree $j \in \{1, \dots, m\}$:
+*   Calculate the **partial residuals** $R_j$:
     $$R_j \equiv Y - \sum_{k \neq j} g(x; T_k, M_k)$$
-2.  Propose a new tree structure $T_j^*$ using Metropolis-Hastings (MH) moves (Grow or Prune) based on the marginal likelihood $P(R_j | T_j, \sigma^2)$ after integrating out $M_j$.
-3.  Draw new leaf parameters $M_j$ from their conjugate normal posterior:
-    $$\mu_{ij} \sim N\left( \frac{\sigma_\mu^2 \sum_{k \in \text{Leaf } i} R_{j,k}}{\sigma^2 + n_i \sigma_\mu^2}, \frac{\sigma^2 \sigma_\mu^2}{\sigma^2 + n_i \sigma_\mu^2} \right)$$
-4.  Draw the residual error variance $\sigma^2$ from its Inverse-Gamma posterior based on the full model residuals.
+*   Propose tree updates $T_j^*$ using Metropolis-Hastings (MH) moves (**Grow** or **Prune**) based on the integrated marginal likelihood:
+    $$P(R_j | T_j, \sigma^2) \propto \prod_{\eta=1}^b \left( \frac{\sigma^2}{\sigma^2 + n_\eta \sigma_\mu^2} \right)^{1/2} \exp\left( \frac{\sigma_\mu^2 (\sum_{l \in I_\eta} R_{j,l})^2}{2 \sigma^2 (\sigma^2 + n_\eta \sigma_\mu^2)} \right)$$
+*   Draw new leaf values $M_j$ from their Gaussian conjugate posteriors.
+*   Update the residual variance $\sigma^2$ based on the full model residuals.
 
 ---
 
 ## ⚡ Performance Optimizations
 
-Pure R implementations of tree algorithms can be slow. To address this, our implementation contains three critical algorithmic optimizations:
+Pure R implementations of MCMC tree algorithms can suffer from high computational overhead. To ensure usability, this implementation incorporates three advanced optimizations:
 
-> [!TIP]
-> **Vectorized Routing Map**: Rather than routing observations row-by-row down the trees, we route the entire dataset at once using vectorized masking.
+> [!IMPORTANT]
+> **1. Vectorized Routing Map**  
+> We evaluate node splitting rules for all observations simultaneously using vectorized logical masks instead of routing rows sequentially, speeding up predictions.
 >
-> **$O(b)$ Train Predictions**: Since each tree node already stores the indices of training observations (`obs_idx`) falling into it, evaluating training set predictions is a simple $O(b)$ lookup of leaf values (where $b \le 10$ is the number of terminal leaves), bypassing routing altogether.
+> **2. $O(b)$ Training Predictions**  
+> Since tree nodes store training observation indices (`obs_idx`) dynamically during splits, evaluating training predictions does not require tree routing. Instead, we directly update predictions by leaf value assignments in $O(b)$ steps (where $b$ is the number of leaves).
 >
-> **$O(N)$ running prediction sums**: Instead of summing all $m$ tree predictions with a costly matrix operation (`rowSums`) at every backfitting step, we maintain a running prediction vector `yhat_sum`. Computing the partial residual becomes a simple $O(N)$ subtraction: `R_j = y - (yhat_sum - tree_preds[, j])`.
+> **3. $O(N)$ Running Prediction Sums**  
+> Rather than re-summing all $m$ tree prediction vectors using `rowSums` at every backfitting step, we maintain a running prediction sum vector `yhat_sum`. Computing partial residuals and updates is reduced to simple $O(N)$ vector updates:
+> `R_j = y - (yhat_sum - tree_preds[, j])`
 
 ---
 
-## 📊 Simulations: Friedman's 5D Test Function
+## 📂 File Structure
 
-We evaluated our custom BART on **Friedman's 5D function** with $p=10$ inputs ($x_6 \dots x_{10}$ are dummy noise variables):
+```
+├── bart.R               # Core BART MCMC implementation and helpers
+├── simulations.R        # Simulated data studies & plotting (Friedman 5D)
+├── real_data_analysis.R # Boston Housing benchmarking script
+├── .gitignore           # Ignores R history, data, and workspace files
+└── figures/             # Output directory for generated plots and summaries
+    ├── simulation_inference.png
+    ├── variable_selection.png
+    ├── real_data_benchmark.png
+    └── benchmark_summary.csv
+```
+
+---
+
+## 🚀 Quick Start Guide
+
+Verify you have the required packages installed:
+```R
+install.packages(c("glmnet", "randomForest", "gbm", "ggplot2"))
+```
+
+### Fitting BART
+To fit the model and predict out-of-sample:
+```R
+source("bart.R")
+
+# Fit the model
+model <- bart_fit(
+  X = X_train, 
+  y = y_train, 
+  X_test = X_test, 
+  num_trees = 200, 
+  ndpost = 1000, 
+  nskip = 250
+)
+
+# Mean predictions for the test set
+predictions <- model$yhat_test_mean
+```
+
+---
+
+## 📊 Simulation Studies (Friedman 5D)
+
+We replicated the paper's simulation using **Friedman's 5-dimensional function** (with $p=10$ total inputs, where $x_6 \dots x_{10}$ are pure noise):
 
 $$y = 10 \sin(\pi x_1 x_2) + 20(x_3 - 0.5)^2 + 10x_4 + 5x_5 + \epsilon, \quad \epsilon \sim N(0, 1)$$
 
-### Estimation and MCMC Trace
-Using $n=100$ observations, 200 trees, 1000 posterior draws, and 250 burn-in iterations:
-*   The model successfully recovers the true signal, showing strong correlation between true $f(x)$ and predicted $\hat{f}(x)$ for both in-sample and out-of-sample data.
-*   The posterior intervals show accurate frequentist coverage and widen for out-of-sample extrapolation.
-*   The MCMC chain for $\sigma$ burns in extremely fast and fluctuates around the true value of $1.0$.
+To run the simulation and generate figures:
+```bash
+Rscript simulations.R
+```
+
+### 1. In-Sample/Out-of-Sample Inference & MCMC Trace (Figure 3)
+*   **In-Sample & Out-of-Sample Fit**: Displays the high correlation between true $f(x)$ and predicted $\hat{f}(x)$. The vertical gray bars represent the 90% posterior intervals, showing accurate coverage.
+*   **Sigma Trace**: The MCMC chain for $\sigma$ burns in almost instantly, fluctuating around the true value of $\sigma = 1.0$.
 
 ![Simulation Inference](figures/simulation_inference.png)
 
-### Variable Selection (Figure 5 Replication)
-By running BART with a smaller number of trees $m \in \{10, 20, 50, 100, 200\}$, we create a bottleneck that forces variables to compete for tree splits. 
-*   As $m$ decreases, BART increasingly favors the true signal variables ($x_1 \dots x_5$), successfully screening out the noise variables ($x_6 \dots x_{10}$).
+### 2. Variable Selection (Figure 5)
+By decreasing the tree size limit $m \in \{10, 20, 50, 100, 200\}$, we restrict the number of splits available. This creates a bottleneck forcing variables to compete:
+*   As $m$ decreases, BART increasingly favors the active variables ($x_1 \dots x_5$) and ignores the dummy noise variables ($x_6 \dots x_{10}$).
 
 ![Variable Selection](figures/variable_selection.png)
 
 ---
 
-## 📈 Real Data Analysis & Benchmarking
+## 📈 Real-World Benchmarking (Boston Housing)
 
-We benchmarked the predictive performance of our custom BART on the **Boston Housing** dataset ($n=506$, $p=13$). Using 10 random train/test splits (5/6 train, 1/6 test), we compared BART against:
-1.  **Ordinary Least Squares (OLS)**
-2.  **Lasso Regression** (via `glmnet` cross-validation)
-3.  **Random Forest** (via `randomForest` with 500 trees)
-4.  **Gradient Boosting (GBM)** (via `gbm` with 200 trees)
+We compared our custom BART implementation against Ordinary Least Squares (OLS), Lasso Regression, Random Forests, and Gradient Boosting (GBM) on the **Boston Housing** dataset ($n=506$, $p=13$). Performance is evaluated over 10 independent train/test splits (5/6 train, 1/6 test) using Relative RMSE (RRMSE).
 
-### Summary Statistics
-The following table shows the Mean RMSE and Relative RMSE (RRMSE) across the 10 splits:
+To run the benchmarking suite and plot outcomes:
+```bash
+Rscript real_data_analysis.R
+```
+
+### Performance Boxplots (Figure 2 Replication)
+The boxplot below displays the distribution of RRMSE (Relative RMSE) across the splits for each model:
+
+![Real Data Benchmark](figures/real_data_benchmark.png)
+
+### Summary Performance Table
+Below is the summary of the benchmarking results:
 
 | Method | Mean RMSE | Median RRMSE | 75% Quantile RRMSE |
 | :--- | :---: | :---: | :---: |
@@ -89,29 +171,4 @@ The following table shows the Mean RMSE and Relative RMSE (RRMSE) across the 10 
 | **Lasso** | 5.04 | 1.638 | 1.733 |
 
 > [!NOTE]
-> Our custom BART implementation achieved excellent performance, outperforming linear models (OLS/Lasso) by a large margin and remaining competitive with Random Forest and Gradient Boosting, despite running with a small ensemble (50 trees, 500 draws) for speed.
-
-![Real Data Benchmark Boxplots](figures/real_data_benchmark.png)
-
----
-
-## 🚀 How to Run the Code
-
-To replicate these results locally, ensure you have R installed along with the required packages:
-
-```R
-install.packages(c("glmnet", "randomForest", "gbm", "ggplot2"))
-```
-
-### 1. Run Simulations
-Run the Friedman 5D simulation script to generate Figure 3 and Figure 5:
-```bash
-Rscript simulations.R
-```
-
-### 2. Run Real Data Analysis
-Run the Boston Housing benchmark script to generate the comparison boxplot:
-```bash
-Rscript real_data_analysis.R
-```
-All output figures will be saved in the `figures/` directory.
+> Our custom BART implementation demonstrates high predictive accuracy, substantially outperforming linear models (OLS/Lasso) and remaining highly competitive with Random Forest and GBM, even when running with a lightweight configuration (50 trees, 500 draws) optimized for pure R execution.
